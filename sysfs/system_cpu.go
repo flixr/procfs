@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/prometheus/procfs/internal/util"
 )
@@ -57,14 +58,16 @@ func NewSystemCpufreq() ([]SystemCPUCpufreqStats, error) {
 // NewSystemCpufreq returns CPU frequency metrics for all CPUs.
 func (fs FS) NewSystemCpufreq() ([]SystemCPUCpufreqStats, error) {
 	var cpufreq = &SystemCPUCpufreqStats{}
+	var wg sync.WaitGroup
 
 	cpus, err := filepath.Glob(fs.Path("devices/system/cpu/cpu[0-9]*"))
 	if err != nil {
 		return []SystemCPUCpufreqStats{}, err
 	}
 
-	systemCpufreq := []SystemCPUCpufreqStats{}
-	for _, cpu := range cpus {
+	systemCpufreq := make([]SystemCPUCpufreqStats, len(cpus))
+	for i, cpu := range cpus {
+		wg.Add(1)
 		cpuName := filepath.Base(cpu)
 		cpuNum := strings.TrimPrefix(cpuName, "cpu")
 
@@ -76,13 +79,18 @@ func (fs FS) NewSystemCpufreq() ([]SystemCPUCpufreqStats, error) {
 			return []SystemCPUCpufreqStats{}, err
 		}
 
-		cpufreq, err = parseCpufreqCpuinfo(cpuCpufreqPath)
-		if err != nil {
-			return []SystemCPUCpufreqStats{}, err
-		}
-		cpufreq.Name = cpuNum
-		systemCpufreq = append(systemCpufreq, *cpufreq)
+		go func(i int, cpuCpufreqPath string, cpuNum string) {
+			defer wg.Done()
+			cpufreq, err = parseCpufreqCpuinfo(cpuCpufreqPath)
+			if err != nil {
+				return
+			}
+			cpufreq.Name = cpuNum
+			systemCpufreq[i] = *cpufreq
+		}(i, cpuCpufreqPath, cpuNum)
 	}
+
+	wg.Wait()
 
 	return systemCpufreq, nil
 }
